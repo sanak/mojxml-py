@@ -44,11 +44,13 @@ Options:
                                   [default: multiprocess]
   -a, --arbitrary                 Include 任意座標系
   -c, --chikugai                  Include 地区外 and 別図
+  -s, --simple-geom               Output as simple geometry (representative point or null for 任意座標系)
 ```
 
 - 出力フォーマットは、出力ファイル名の拡張子から自動で判断されます。
 - `-a` オプションを指定すると、任意座標系のXMLファイルも変換されます。
 - `-c` オプションを指定すると、地番が「地区外」「別図」の地物も出力されます。
+- `-s` オプションを指定すると、ジオメトリが代表点のポイント、もしくは任意座標系の場合はNullとして出力されます。
 
 ### 使用例
 

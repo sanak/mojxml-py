@@ -34,6 +34,14 @@ from .process.executor import EXECUTOR_MAP
     help="Include 任意座標系",
 )
 @click.option(
+    "-s",
+    "--simple-geom",
+    is_flag=True,
+    show_default=True,
+    default=False,
+    help="Use simple geometry (representative point or null for 任意座標系)",
+)
+@click.option(
     "-c",
     "--chikugai",
     is_flag=True,
@@ -42,7 +50,12 @@ from .process.executor import EXECUTOR_MAP
     help="Include 地区外 and 別図",
 )
 def main(
-    dst_file: Path, src_files: List[Path], worker: str, arbitrary: bool, chikugai: bool
+    dst_file: Path,
+    src_files: List[Path],
+    worker: str,
+    arbitrary: bool,
+    chikugai: bool,
+    simple_geom: bool,
 ) -> None:
     """Convert MoJ XMLs to GeoJSON/GeoPackage/FlatGeobuf/etc.
 
@@ -60,6 +73,7 @@ def main(
     options = ParseOptions(
         include_arbitrary_crs=arbitrary,
         include_chikugai=chikugai,
+        as_simple_geom=simple_geom,
     )
     executor = EXECUTOR_MAP[worker](options)
 

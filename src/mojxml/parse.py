@@ -5,6 +5,7 @@ from typing import Dict, List, Tuple, TypedDict
 
 import lxml.etree as et
 import pyproj
+from shapely.geometry import Polygon
 
 from .constants import CRS_MAP
 from .constants import XML_NAMESPACES as _NS
@@ -20,6 +21,7 @@ class ParseOptions:
 
     include_arbitrary_crs: bool = False
     include_chikugai: bool = False
+    as_simple_geom: bool = False
 
 
 class Feature(TypedDict):
@@ -101,7 +103,7 @@ def _parse_curves(
 
 
 def _parse_surfaces(
-    spatial_elem: et._Element, curves: Dict[str, Curve]
+    spatial_elem: et._Element, curves: Dict[str, Curve], as_point_geom: bool = False
 ) -> Dict[str, Surface]:
     surfaces: Dict[str, Surface] = {}
     for surface in spatial_elem.iterfind("./zmn:GM_Surface", _NS):
@@ -130,13 +132,26 @@ def _parse_surfaces(
             rings.append(ring)
 
         assert surface_id not in surfaces
-        surfaces[surface_id] = [rings]
+        if not as_point_geom:
+            surfaces[surface_id] = [rings]
+        else:
+            exterior = rings[0]
+            interiors = rings[1:] if len(rings) > 1 else []
+            multipolygon = Polygon(exterior, interiors)
+            centroid = multipolygon.centroid
+            surfaces[surface_id] = [centroid.x, centroid.y]
+        # print('surface_id:', surface_id)
 
+    # print('surfaces:', surfaces)
     return surfaces
 
 
 def _parse_features(
-    subject_elem: et._Element, surfaces: Dict[str, Surface], include_chikugai: bool
+    subject_elem: et._Element,
+    surfaces: Dict[str, Surface],
+    include_chikugai: bool,
+    as_null_geom: bool,
+    as_point_geom: bool,
 ) -> List[Feature]:
     features = []
     for fude in subject_elem.iterfind("./筆", _NS):
@@ -165,8 +180,14 @@ def _parse_features(
         for entry in fude:
             key = entry.tag.split("}")[1]
             if key == "形状":
+                if as_null_geom:
+                    geometry = None
+                    continue
                 coordinates = surfaces[entry.attrib["idref"]]
-                geometry = {"type": "MultiPolygon", "coordinates": coordinates}
+                if not as_point_geom:
+                    geometry = {"type": "MultiPolygon", "coordinates": coordinates}
+                else:
+                    geometry = {"type": "Point", "coordinates": coordinates}
             else:
                 value = entry.text
                 properties[key] = value
@@ -177,6 +198,7 @@ def _parse_features(
             if "地区外" in chiban or "別図" in chiban:
                 continue
 
+        # print(geometry)
         features.append(
             {"type": "Feature", "geometry": geometry, "properties": properties}
         )
@@ -190,37 +212,46 @@ def parse_raw(content: bytes, options: ParseOptions) -> List[Feature]:
 
     # このファイルの座標参照系を取得する
     source_crs = CRS_MAP[doc.find("./座標系", _NS).text]
-    if (not options.include_arbitrary_crs) and source_crs is None:
+
+    include_arbitrary_crs = options.include_arbitrary_crs
+    as_simple_geom = options.as_simple_geom
+    if source_crs is None and (not include_arbitrary_crs):
         return []
 
-    spatial_elem = doc.find("./空間属性", _NS)
-    points = _parse_points(spatial_elem)
-    curves = _parse_curves(spatial_elem, points)
+    surfaces = None
+    as_null_geom = as_simple_geom and (source_crs is None and include_arbitrary_crs)
+    as_point_geom = as_simple_geom and not (
+        source_crs is None and include_arbitrary_crs
+    )
+    if not as_null_geom:
+        spatial_elem = doc.find("./空間属性", _NS)
+        points = _parse_points(spatial_elem)
+        curves = _parse_curves(spatial_elem, points)
 
-    # 平面直角座標系を WGS84 に変換する
-    if source_crs is not None:
-        transformer = pyproj.Transformer.from_crs(
-            source_crs, "epsg:4326", always_xy=True
-        )
-        curve_ids: list[str] = []
-        xx: list[float] = []
-        yy: list[float] = []
+        # 平面直角座標系を WGS84 に変換する
+        if source_crs is not None:
+            transformer = pyproj.Transformer.from_crs(
+                source_crs, "epsg:4326", always_xy=True
+            )
+            curve_ids: list[str] = []
+            xx: list[float] = []
+            yy: list[float] = []
+            for curve_id, (x, y) in curves.items():
+                curve_ids.append(curve_id)
+                xx.append(x)
+                yy.append(y)
+            (xx, yy) = transformer.transform(xx, yy)
+            for curve_id, x, y in zip(curve_ids, xx, yy):
+                curves[curve_id] = (x, y)
+
+        # 小数点以下9ケタに丸める
         for curve_id, (x, y) in curves.items():
-            curve_ids.append(curve_id)
-            xx.append(x)
-            yy.append(y)
-        (xx, yy) = transformer.transform(xx, yy)
-        for curve_id, x, y in zip(curve_ids, xx, yy):
-            curves[curve_id] = (x, y)
+            curves[curve_id] = (
+                int(x * 1000000000) / 1000000000,
+                int(y * 1000000000) / 1000000000,
+            )
 
-    # 小数点以下9ケタに丸める
-    for curve_id, (x, y) in curves.items():
-        curves[curve_id] = (
-            int(x * 1000000000) / 1000000000,
-            int(y * 1000000000) / 1000000000,
-        )
-
-    surfaces = _parse_surfaces(spatial_elem, curves)
+        surfaces = _parse_surfaces(spatial_elem, curves, as_point_geom=as_point_geom)
 
     # Note: 図郭についてはひとまず扱わないことにする。
     # デジタル庁の実装は筆に図郭の情報を付与しているのものの、
@@ -239,7 +270,11 @@ def parse_raw(content: bytes, options: ParseOptions) -> List[Feature]:
 
     subject_elem = doc.find("./主題属性", _NS)
     features = _parse_features(
-        subject_elem, surfaces, include_chikugai=options.include_chikugai
+        subject_elem,
+        surfaces,
+        include_chikugai=options.include_chikugai,
+        as_null_geom=as_null_geom,
+        as_point_geom=as_point_geom,
     )
 
     # XMLのルート要素にある属性情報をFeatureのプロパティに追加する

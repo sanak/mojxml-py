@@ -11,7 +11,7 @@ except ImportError:  # pragma: no cover
 
 from ..parse import Feature
 from ..reader import iter_content_xmls
-from ..schema import OGR_SCHEMA
+from ..schema import get_ogr_schema
 from .executor import BaseExecutor
 
 _logger = logging.getLogger(__name__)
@@ -21,6 +21,7 @@ def _write_by_fiona(
     features_iter: Iterable[List[Feature]],
     dst_path: Path,
     driver: Optional[str] = None,
+    as_simple_geom: bool = False,
 ) -> Iterable[Tuple[int, int]]:  # (num_files, num_features)
     assert fiona, "fiona is not installed"
 
@@ -28,8 +29,9 @@ def _write_by_fiona(
         dst_path,
         "w",
         driver=driver,
-        schema=OGR_SCHEMA,
+        schema=get_ogr_schema(as_simple_geom=as_simple_geom),
         crs="EPSG:4326",
+        SPATIAL_INDEX="NO",
     ) as f:
         num_files = 0
         num_features = 0
@@ -55,6 +57,7 @@ def files_to_ogr_file(
         features_iter,
         dst_path,
         driver=driver,
+        as_simple_geom=executor.options.as_simple_geom,
     ):
         if num_files > 0 and num_files % 10 == 0:
             _logger.info(
