@@ -104,8 +104,8 @@ def _parse_curves(
 
 def _parse_surfaces(
     spatial_elem: et._Element, curves: Dict[str, Curve], as_point_geom: bool = False
-) -> Dict[str, Surface]:
-    surfaces: Dict[str, Surface] = {}
+) -> Dict[str, Surface | Point]:
+    surfaces: Dict[str, Surface | Point] = {}
     for surface in spatial_elem.iterfind("./zmn:GM_Surface", _NS):
         polygons = surface.findall("./zmn:GM_Surface.patch/zmn:GM_Polygon", _NS)
         assert len(polygons) == 1
@@ -139,7 +139,7 @@ def _parse_surfaces(
             interiors = rings[1:] if len(rings) > 1 else []
             multipolygon = Polygon(exterior, interiors)
             centroid = multipolygon.centroid
-            surfaces[surface_id] = [centroid.x, centroid.y]
+            surfaces[surface_id] = (centroid.x, centroid.y)
         # print('surface_id:', surface_id)
 
     # print('surfaces:', surfaces)
@@ -148,7 +148,7 @@ def _parse_surfaces(
 
 def _parse_features(
     subject_elem: et._Element,
-    surfaces: Dict[str, Surface],
+    surfaces: Dict[str, Surface | Point],
     include_chikugai: bool,
     as_null_geom: bool,
     as_point_geom: bool,
@@ -218,7 +218,7 @@ def parse_raw(content: bytes, options: ParseOptions) -> List[Feature]:
     if source_crs is None and (not include_arbitrary_crs):
         return []
 
-    surfaces = None
+    surfaces = {}
     as_null_geom = as_simple_geom and (source_crs is None and include_arbitrary_crs)
     as_point_geom = as_simple_geom and not (
         source_crs is None and include_arbitrary_crs
