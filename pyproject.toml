@@ -21,6 +21,7 @@ dependencies = [
     "fiona>=1.10.0",
     "click>=8.1.8",
     "pyproj>=3.7.1",
+    "shapely>=2.1.2",
 ]
 
 [project.urls]
